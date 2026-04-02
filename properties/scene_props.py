@@ -20,6 +20,29 @@ def _is_mesh_object(self, obj):
 class BlockblendProperties(PropertyGroup):
     """Blockblend场景属性组"""
 
+    # === 引擎选择 ===
+
+    engine_mode: EnumProperty(
+        name="分解模式",
+        description="选择形状分解算法",
+        items=[
+            ('OBB', 'OBB 分解', '有向包围盒层次化拆分，方块可旋转'),
+            ('HEIGHTFIELD', '高度场方块', '轴对齐方块组合，Minecraft 风格'),
+        ],
+        default='HEIGHTFIELD'
+    )
+
+    voxel_size: FloatProperty(
+        name="体素大小",
+        description="高度场模式的体素分辨率（越小越精细，方块越多）",
+        min=0.01,
+        max=1.0,
+        default=0.1,
+        step=0.01,
+        precision=3,
+        unit='LENGTH'
+    )
+
     # === OBB 分解参数 ===
 
     cube_count: IntProperty(

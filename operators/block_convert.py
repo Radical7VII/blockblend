@@ -1,14 +1,15 @@
-"""OBB cube conversion operator"""
+"""Block conversion operator — dispatches to selected engine"""
 
 import bpy
 from ..core.obb_engine import OBBEngine
+from ..core.heightfield_engine import HeightFieldEngine
 
 
 class OBJECT_OT_blockblend_convert(bpy.types.Operator):
     """用多个立方体概括模型形状"""
     bl_idname = "object.blockblend_convert"
-    bl_label = "生成立方体包围盒"
-    bl_description = "用多个可旋转的立方体来概括选中模型的体积和形状"
+    bl_label = "生成立方体"
+    bl_description = "用多个立方体来概括选中模型的体积和形状"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -20,7 +21,7 @@ class OBJECT_OT_blockblend_convert(bpy.types.Operator):
         )
 
     def execute(self, context):
-        """执行 OBB 分解，直接从场景属性读取参数"""
+        """根据引擎模式执行分解"""
         obj = context.active_object
 
         if not obj or obj.type != 'MESH':
@@ -29,31 +30,18 @@ class OBJECT_OT_blockblend_convert(bpy.types.Operator):
 
         props = context.scene.blockblend_props
 
-        engine = OBBEngine(obj)
-
         try:
-            result = engine.execute(
-                cube_count=props.cube_count,
-                min_cube_size=props.min_cube_size,
-                cube_gap=props.cube_gap,
-                collection_name=props.collection_name,
-            )
+            if props.engine_mode == 'HEIGHTFIELD':
+                result = self._run_heightfield(obj, props)
+            else:
+                result = self._run_obb(obj, props)
 
             if isinstance(result, list):
                 props.generated_cube_count = len(result)
-                props.last_cube_count_setting = props.cube_count
-
-                if len(result) < props.cube_count:
-                    self.report(
-                        {'WARNING'},
-                        f"面数不足，仅生成 {len(result)} 个立方体 "
-                        f"(目标 {props.cube_count})"
-                    )
-                else:
-                    self.report(
-                        {'INFO'},
-                        f"成功创建了 {len(result)} 个立方体"
-                    )
+                self.report(
+                    {'INFO'},
+                    f"成功创建了 {len(result)} 个立方体"
+                )
             else:
                 self.report({'INFO'}, "转换完成")
 
@@ -70,6 +58,34 @@ class OBJECT_OT_blockblend_convert(bpy.types.Operator):
         except Exception as e:
             self.report({'ERROR'}, f"未知错误: {str(e)}")
             return {'CANCELLED'}
+
+    def _run_obb(self, obj, props):
+        """执行 OBB 分解"""
+        engine = OBBEngine(obj)
+        result = engine.execute(
+            cube_count=props.cube_count,
+            min_cube_size=props.min_cube_size,
+            cube_gap=props.cube_gap,
+            collection_name=props.collection_name,
+        )
+        if isinstance(result, list):
+            props.last_cube_count_setting = props.cube_count
+            if len(result) < props.cube_count:
+                self.report(
+                    {'WARNING'},
+                    f"面数不足，仅生成 {len(result)} 个立方体 "
+                    f"(目标 {props.cube_count})"
+                )
+        return result
+
+    def _run_heightfield(self, obj, props):
+        """执行高度场方块分解"""
+        engine = HeightFieldEngine(obj)
+        return engine.execute(
+            voxel_size=props.voxel_size,
+            cube_gap=props.cube_gap,
+            collection_name=props.collection_name,
+        )
 
 
 # 注册和注销

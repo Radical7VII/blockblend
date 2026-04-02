@@ -54,15 +54,27 @@ class VIEW3D_PT_blockblend_convert_panel(Panel):
         layout = self.layout
         props = context.scene.blockblend_props
 
-        # --- OBB 分解设置 ---
+        # --- 引擎选择 ---
         box = layout.box()
-        box.label(text="分解设置", icon='MOD_REMESH')
+        box.label(text="分解模式", icon='MOD_REMESH')
 
         row = box.row(align=True)
-        row.prop(props, "cube_count", slider=True)
+        row.prop(props, "engine_mode", text="")
 
-        row = box.row(align=True)
-        row.prop(props, "min_cube_size", slider=True)
+        # --- 引擎特定参数 ---
+        box = layout.box()
+
+        if props.engine_mode == 'OBB':
+            box.label(text="OBB 设置", icon='ORIENTATION_LOCAL')
+            row = box.row(align=True)
+            row.prop(props, "cube_count", slider=True)
+            row = box.row(align=True)
+            row.prop(props, "min_cube_size", slider=True)
+
+        elif props.engine_mode == 'HEIGHTFIELD':
+            box.label(text="高度场设置", icon='GRID')
+            row = box.row(align=True)
+            row.prop(props, "voxel_size", slider=True)
 
         # --- 立方体设置 ---
         box = layout.box()
@@ -98,10 +110,15 @@ class VIEW3D_PT_blockblend_convert_panel(Panel):
         layout.separator()
         row = layout.row(align=True)
         row.scale_y = 1.5
+
+        btn_text = (
+            "生成高度场方块" if props.engine_mode == 'HEIGHTFIELD'
+            else "生成 OBB 包围盒"
+        )
         row.operator(
             "object.blockblend_convert",
-            text="生成立方体包围盒",
-            icon='MESH_MONKEY',
+            text=btn_text,
+            icon='GRID' if props.engine_mode == 'HEIGHTFIELD' else 'MESH_MONKEY',
         )
 
         # 统计信息
