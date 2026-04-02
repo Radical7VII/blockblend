@@ -144,6 +144,66 @@ class VIEW3D_PT_blockblend_main_panel(Panel):
 
         layout.separator()
 
+        # === 贴图烘焙 ===
+        box = layout.box()
+        box.label(text="贴图烘焙 (LOD)", icon='NODE_MATERIAL')
+
+        # 显示当前选择状态
+        selected_meshes = [
+            o for o in context.selected_objects if o.type == 'MESH'
+        ]
+
+        if len(selected_meshes) == 2:
+            source = context.active_object
+            target = next(
+                (o for o in selected_meshes if o != source), None
+            )
+
+            col = box.column(align=True)
+            col.label(text=f"源 (高模): {source.name}", icon='OBJECT_DATA')
+            col.label(text=f"目标 (LOD): {target.name}", icon='MOD_DECIM')
+
+            # 检查目标 UV
+            if target and not target.data.uv_layers.active:
+                row = box.row()
+                row.label(text="⚠ 目标没有UV贴图!", icon='ERROR')
+        elif len(selected_meshes) == 1:
+            row = box.row()
+            row.label(text="请再选中一个对象作为目标", icon='INFO')
+        else:
+            row = box.row()
+            row.label(text="请选中两个网格对象", icon='INFO')
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text="1. 选择高模 (源)")
+            col.label(text="2. Shift+点击低模 (目标)")
+            col.label(text="3. 高模保持为活动对象")
+
+        # 烘焙设置
+        box.separator()
+        row = box.row(align=True)
+        row.prop(props, "bake_type", text="类型")
+        row = box.row(align=True)
+        row.prop(props, "bake_resolution", text="分辨率")
+        row = box.row(align=True)
+        row.prop(props, "bake_margin", text="边距")
+
+        # 采样数仅对 AO/合成 有意义
+        if props.bake_type in {'AO', 'COMBINED'}:
+            row = box.row(align=True)
+            row.prop(props, "bake_samples", text="采样")
+
+        # 烘焙按钮
+        row = box.row(align=True)
+        row.scale_y = 1.3
+        row.operator(
+            "object.blockblend_bake",
+            text="烘焙贴图到目标模型",
+            icon='RENDER_STILL',
+        )
+
+        layout.separator()
+
         # === 帮助信息 ===
         box = layout.box()
         box.label(text="提示:", icon='HELP')

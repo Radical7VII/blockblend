@@ -148,6 +148,18 @@ class BlockblendProperties(PropertyGroup):
 
     # === 材质烘焙设置 ===
 
+    bake_type: EnumProperty(
+        name="烘焙类型",
+        description="选择要烘焙的贴图类型",
+        items=[
+            ('DIFFUSE', '漫反射颜色', '烘焙基础颜色和纹理'),
+            ('NORMAL', '法线贴图', '烘焙表面法线细节（推荐用于LOD）'),
+            ('AO', '环境光遮蔽', '烘焙AO阴影'),
+            ('COMBINED', '合成', '烘焙所有通道（颜色+光照+阴影）'),
+        ],
+        default='DIFFUSE'
+    )
+
     bake_resolution: IntProperty(
         name="烘焙分辨率",
         description="烘焙贴图的分辨率（像素）",
@@ -159,7 +171,7 @@ class BlockblendProperties(PropertyGroup):
 
     bake_samples: IntProperty(
         name="烘焙采样数",
-        description="烘焙时的采样数量（越高越慢但质量更好）",
+        description="烘焙时的采样数量（AO和合成模式需要较高采样）",
         min=1,
         max=256,
         default=64,
@@ -168,7 +180,7 @@ class BlockblendProperties(PropertyGroup):
 
     bake_margin: IntProperty(
         name="烘焙边距",
-        description="烘焙贴图的边距（像素）",
+        description="烘焙贴图UV边缘的扩展像素数（防止接缝漏色）",
         min=0,
         max=64,
         default=4,
