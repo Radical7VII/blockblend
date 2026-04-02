@@ -1,6 +1,7 @@
 """Helper functions for Blockblend plugin"""
 
 import bpy
+import random
 from mathutils import Vector
 
 
@@ -203,3 +204,83 @@ def report_warning(operator: bpy.types.Operator, message: str):
         message: 警告消息
     """
     operator.report({'WARNING'}, message)
+
+
+def apply_color_to_cube(
+    cube: bpy.types.Object,
+    center: tuple,
+    index: int,
+    total: int,
+    color_mode: str,
+    uniform_color: tuple = (0.5, 0.5, 0.5),
+    color_variation: float = 0.3,
+    base_color: tuple = (0.8, 0.6, 0.4),
+    original_materials: list = None,
+    min_z: float = 0.0,
+    max_z: float = 1.0,
+):
+    """
+    根据颜色模式为立方体应用颜色或材质
+
+    Args:
+        cube: 立方体对象
+        center: 中心点坐标 (x, y, z)
+        index: 当前索引
+        total: 总数
+        color_mode: 颜色模式
+        uniform_color: 统一颜色RGB
+        color_variation: 随机颜色变化范围
+        base_color: 随机颜色基础色
+        original_materials: 原始材质列表
+        min_z: 最小Z值（高度着色用）
+        max_z: 最大Z值（高度着色用）
+    """
+    if original_materials is None:
+        original_materials = []
+
+    if color_mode == 'ORIGINAL' and original_materials:
+        for mat in original_materials:
+            cube.data.materials.append(mat)
+        return
+
+    mat = bpy.data.materials.new(name=f"BB_Mat_{cube.name}")
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    bsdf = nodes.get("Principled BSDF")
+
+    if not bsdf:
+        cube.data.materials.append(mat)
+        return
+
+    if color_mode == 'ORIGINAL':
+        color = uniform_color
+    elif color_mode == 'UNIFORM':
+        color = uniform_color
+    elif color_mode == 'RANDOM':
+        color = (
+            max(0.0, min(1.0, base_color[0] + (random.random() - 0.5) * color_variation)),
+            max(0.0, min(1.0, base_color[1] + (random.random() - 0.5) * color_variation)),
+            max(0.0, min(1.0, base_color[2] + (random.random() - 0.5) * color_variation)),
+        )
+    elif color_mode == 'HEIGHT':
+        t = (center[2] - min_z) / (max_z - min_z) if max_z > min_z else 0.5
+        if t < 0.5:
+            lt = t * 2
+            color = (0.2, 0.2 + lt * 0.6, 0.8 - lt * 0.6)
+        else:
+            lt = (t - 0.5) * 2
+            color = (0.2 + lt * 0.6, 0.8 - lt * 0.2, 0.2 - lt * 0.1)
+    elif color_mode == 'POSITION':
+        x_factor = (center[0] + 5) / 10
+        y_factor = (center[1] + 5) / 10
+        z_factor = (center[2] - min_z) / (max_z - min_z) if max_z > min_z else 0.5
+        color = (
+            max(0.0, min(1.0, x_factor)),
+            max(0.0, min(1.0, y_factor)),
+            max(0.0, min(1.0, z_factor)),
+        )
+    else:
+        color = uniform_color
+
+    bsdf.inputs["Base Color"].default_value = (color[0], color[1], color[2], 1.0)
+    cube.data.materials.append(mat)

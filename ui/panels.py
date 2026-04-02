@@ -4,8 +4,12 @@ import bpy
 from bpy.types import Panel
 
 
+# ============================================================
+# 主面板：对象信息
+# ============================================================
+
 class VIEW3D_PT_blockblend_main_panel(Panel):
-    """Blockblend主面板"""
+    """Blockblend 主面板 — 显示当前对象信息"""
     bl_label = "Blockblend"
     bl_idname = "VIEW3D_PT_blockblend_main_panel"
     bl_space_type = 'VIEW_3D'
@@ -13,99 +17,71 @@ class VIEW3D_PT_blockblend_main_panel(Panel):
     bl_category = 'Blockblend'
 
     def draw(self, context):
-        """
-        绘制面板UI
-
-        Args:
-            context: Blender上下文
-        """
         layout = self.layout
-        scene = context.scene
-        props = scene.blockblend_props
-
-        # === 对象信息 ===
         obj = context.active_object
 
         if obj and obj.type == 'MESH':
             box = layout.box()
-            box.label(text="当前对象:", icon='OBJECT_DATAMODE')
+            row = box.row(align=True)
+            row.label(text=obj.name, icon='OBJECT_DATAMODE')
 
             row = box.row(align=True)
-            row.label(text=obj.name, icon='EDITMODE_HLT')
-
-            # 统计信息
-            row = box.row(align=True)
-            row.label(text=f"面数: {len(obj.data.polygons):,}", icon='MESH_DATA')
+            row.label(text=f"面: {len(obj.data.polygons):,}", icon='MESH_DATA')
             row.label(text=f"顶点: {len(obj.data.vertices):,}")
 
-            # 显示尺寸
             dimensions = obj.dimensions
             row = box.row(align=True)
             row.label(text=f"尺寸: {dimensions.x:.2f} x {dimensions.y:.2f} x {dimensions.z:.2f}")
-
         else:
             box = layout.box()
-            box.label(text="未选择对象", icon='ERROR')
-            row = box.row()
-            row.label(text="请选择一个网格对象")
-            return
+            box.label(text="请选择一个网格对象", icon='ERROR')
 
-        layout.separator()
 
-        # === 转换设置 ===
+# ============================================================
+# 子面板 1：生成立方体包围盒
+# ============================================================
+
+class VIEW3D_PT_blockblend_convert_panel(Panel):
+    """生成立方体包围盒子面板"""
+    bl_label = "生成立方体包围盒"
+    bl_idname = "VIEW3D_PT_blockblend_convert_panel"
+    bl_parent_id = "VIEW3D_PT_blockblend_main_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Blockblend'
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.blockblend_props
+
+        # --- OBB 分解设置 ---
         box = layout.box()
-        box.label(text="转换设置", icon='MOD_REMESH')
+        box.label(text="分解设置", icon='MOD_REMESH')
 
-        # 体素大小
         row = box.row(align=True)
-        row.prop(props, "voxel_size", slider=True)
+        row.prop(props, "cube_count", slider=True)
 
-        # 自动计算体素大小按钮
         row = box.row(align=True)
-        row.label(text="自动计算:")
-        row.prop(props, "detail_level", slider=True)
+        row.prop(props, "min_cube_size", slider=True)
 
-        # 适应性
-        row = box.row(align=True)
-        row.prop(props, "adaptivity", slider=True)
-
-        layout.separator()
-
-        # === 立方体设置 ===
+        # --- 立方体设置 ---
         box = layout.box()
         box.label(text="立方体设置", icon='CUBE')
 
-        row = box.row()
-        row.prop(props, "create_cubes")
+        row = box.row(align=True)
+        row.prop(props, "cube_gap", slider=True)
 
-        if props.create_cubes:
-            row = box.row(align=True)
-            row.prop(props, "cube_gap", slider=True)
-            row = box.row(align=True)
-            row.prop(props, "cube_scale", slider=True)
-
-            row = box.row()
-            row.prop(props, "merge_cubes")
-
-        layout.separator()
-
-        # === 材质和颜色 ===
+        # --- 材质和颜色 ---
         box = layout.box()
         box.label(text="材质和颜色", icon='MATERIAL')
 
         row = box.row()
         row.prop(props, "preserve_materials")
 
-        if props.preserve_materials:
-            row = box.row(align=True)
-            row.label(text="颜色覆盖:")
-            row.prop(props, "color_mode", text="")
-        else:
-            row = box.row(align=True)
-            row.label(text="颜色模式:")
-            row.prop(props, "color_mode", text="")
+        row = box.row(align=True)
+        row.label(text="颜色模式:")
+        row.prop(props, "color_mode", text="")
 
-        # 根据颜色模式显示相应选项
         if props.color_mode == 'UNIFORM':
             row = box.row(align=True)
             row.prop(props, "uniform_color")
@@ -115,72 +91,73 @@ class VIEW3D_PT_blockblend_main_panel(Panel):
             row = box.row(align=True)
             row.prop(props, "color_variation", slider=True)
 
+        # --- 操作按钮 ---
         layout.separator()
-
-        # === 高级设置 ===
-        box = layout.box()
-        box.label(text="高级设置", icon='SETTINGS')
-
-        row = box.row()
-        row.prop(props, "smooth_shading")
-        row = box.row()
-        row.prop(props, "remove_original")
-
-        layout.separator()
-
-        # === 操作按钮 ===
-        # 主要转换按钮
         row = layout.row(align=True)
         row.scale_y = 1.5
-        row.operator("object.blockblend_convert", text="转换为方块风格", icon='MESH_MONKEY')
+        row.operator(
+            "object.blockblend_convert",
+            text="生成立方体包围盒",
+            icon='MESH_MONKEY',
+        )
 
-        # 如果有统计信息，显示
-        if props.cube_count > 0:
+        # 统计信息
+        if props.generated_cube_count > 0:
             row = layout.row()
-            row.label(text=f"上次转换: 创建了 {props.cube_count} 个立方体", icon='INFO')
-            if props.last_voxel_size > 0:
-                row = layout.row()
-                row.label(text=f"体素大小: {props.last_voxel_size:.3f}", icon='DOT')
-
-        layout.separator()
-
-        # === 贴图烘焙 ===
-        box = layout.box()
-        box.label(text="贴图烘焙 (LOD)", icon='NODE_MATERIAL')
-
-        # 显示当前选择状态
-        selected_meshes = [
-            o for o in context.selected_objects if o.type == 'MESH'
-        ]
-
-        if len(selected_meshes) == 2:
-            source = context.active_object
-            target = next(
-                (o for o in selected_meshes if o != source), None
+            row.label(
+                text=f"上次: {props.generated_cube_count} 个立方体 "
+                     f"(目标 {props.last_cube_count_setting})",
+                icon='INFO',
             )
 
-            col = box.column(align=True)
-            col.label(text=f"源 (高模): {source.name}", icon='OBJECT_DATA')
-            col.label(text=f"目标 (LOD): {target.name}", icon='MOD_DECIM')
 
-            # 检查目标 UV
-            if target and not target.data.uv_layers.active:
+# ============================================================
+# 子面板 2：烘焙贴图
+# ============================================================
+
+class VIEW3D_PT_blockblend_bake_panel(Panel):
+    """烘焙贴图子面板"""
+    bl_label = "烘焙贴图"
+    bl_idname = "VIEW3D_PT_blockblend_bake_panel"
+    bl_parent_id = "VIEW3D_PT_blockblend_main_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Blockblend'
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.blockblend_props
+
+        # --- 对象选择 ---
+        box = layout.box()
+        box.label(text="烘焙对象", icon='OBJECT_DATA')
+
+        row = box.row(align=True)
+        row.prop(props, "bake_source_object", text="源 (高模)")
+
+        row = box.row(align=True)
+        row.prop(props, "bake_target_object", text="目标 (LOD)")
+
+        # 验证提示
+        source = props.bake_source_object
+        target = props.bake_target_object
+
+        if source and target:
+            if source == target:
                 row = box.row()
-                row.label(text="⚠ 目标没有UV贴图!", icon='ERROR')
-        elif len(selected_meshes) == 1:
-            row = box.row()
-            row.label(text="请再选中一个对象作为目标", icon='INFO')
-        else:
-            row = box.row()
-            row.label(text="请选中两个网格对象", icon='INFO')
+                row.label(text="源和目标不能是同一对象!", icon='ERROR')
+            elif not target.data.uv_layers.active:
+                row = box.row()
+                row.label(text="目标没有UV贴图!", icon='ERROR')
+        elif not source and not target:
             col = box.column(align=True)
             col.scale_y = 0.8
-            col.label(text="1. 选择高模 (源)")
-            col.label(text="2. Shift+点击低模 (目标)")
-            col.label(text="3. 高模保持为活动对象")
+            col.label(text="请在上方选择源模型和目标模型", icon='INFO')
 
-        # 烘焙设置
-        box.separator()
+        # --- 烘焙设置 ---
+        box = layout.box()
+        box.label(text="烘焙设置", icon='NODE_MATERIAL')
+
         row = box.row(align=True)
         row.prop(props, "bake_type", text="类型")
         row = box.row(align=True)
@@ -188,36 +165,27 @@ class VIEW3D_PT_blockblend_main_panel(Panel):
         row = box.row(align=True)
         row.prop(props, "bake_margin", text="边距")
 
-        # 采样数仅对 AO/合成 有意义
         if props.bake_type in {'AO', 'COMBINED'}:
             row = box.row(align=True)
             row.prop(props, "bake_samples", text="采样")
 
-        # 烘焙按钮
-        row = box.row(align=True)
-        row.scale_y = 1.3
+        # --- 操作按钮 ---
+        layout.separator()
+        row = layout.row(align=True)
+        row.scale_y = 1.5
         row.operator(
             "object.blockblend_bake",
             text="烘焙贴图到目标模型",
             icon='RENDER_STILL',
         )
 
-        layout.separator()
 
-        # === 帮助信息 ===
-        box = layout.box()
-        box.label(text="提示:", icon='HELP')
-
-        col = box.column(align=True)
-        col.label(text="• 较小的体素值 = 更多细节")
-        col.label(text="• 适应性0 = 均匀方块")
-        col.label(text="• 适应性1 = 自适应细节")
-        col.label(text="• 合并立方体可提高性能")
-        col.label(text="• 按Ctrl+Z可撤销转换")
-
+# ============================================================
+# 关于面板
+# ============================================================
 
 class VIEW3D_PT_blockblend_info_panel(Panel):
-    """Blockblend信息面板"""
+    """Blockblend 信息面板"""
     bl_label = "关于"
     bl_idname = "VIEW3D_PT_blockblend_info_panel"
     bl_space_type = 'VIEW_3D'
@@ -226,58 +194,61 @@ class VIEW3D_PT_blockblend_info_panel(Panel):
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
-        """
-        绘制信息面板
-
-        Args:
-            context: Blender上下文
-        """
         layout = self.layout
-        scene = context.scene
-        props = scene.blockblend_props
+        props = context.scene.blockblend_props
 
-        # 插件信息
         col = layout.column(align=True)
         col.label(text="Blockblend v1.0.0", icon='PLUGIN')
         col.separator()
-        col.label(text="将高模转换为方块风格", icon='INFO')
-        col.separator()
+        col.label(text="用多个立方体概括模型形状", icon='INFO')
 
-        # 统计信息
-        if props.cube_count > 0:
+        if props.generated_cube_count > 0:
+            layout.separator()
             box = layout.box()
             box.label(text="转换统计", icon='TRACKER')
             col = box.column(align=True)
-            col.label(text=f"立方体数量: {props.cube_count:,}")
-            if props.last_voxel_size > 0:
-                col.label(text=f"体素大小: {props.last_voxel_size:.3f}")
+            col.label(text=f"立方体数量: {props.generated_cube_count:,}")
+            col.label(text=f"目标数量: {props.last_cube_count_setting}")
 
-        # 说明
         layout.separator()
         col = layout.column(align=True)
         col.label(text="使用方法:", icon='QUESTION')
         col = layout.column(align=True)
         col.scale_y = 0.8
         col.label(text="1. 选择一个网格对象")
-        col.label(text="2. 调整参数设置")
-        col.label(text="3. 点击'转换为方块风格'")
-        col.label(text="4. 按Ctrl+Z撤销重试")
+        col.label(text="2. 设置立方体数量和最小尺寸")
+        col.label(text="3. 点击'生成立方体包围盒'")
+        col.label(text="4. 再次点击可替换之前的结果")
+        col.label(text="5. 按Ctrl+Z撤销重试")
+
+        layout.separator()
+        col = layout.column(align=True)
+        col.label(text="烘焙贴图:", icon='QUESTION')
+        col = layout.column(align=True)
+        col.scale_y = 0.8
+        col.label(text="1. 在烘焙面板选择源模型 (高模)")
+        col.label(text="2. 选择目标模型 (LOD)")
+        col.label(text="3. 选择烘焙类型和分辨率")
+        col.label(text="4. 点击'烘焙贴图到目标模型'")
 
 
-# 注册和注销
+# ============================================================
+# 注册
+# ============================================================
+
 _classes = [
     VIEW3D_PT_blockblend_main_panel,
-    VIEW3D_PT_blockblend_info_panel
+    VIEW3D_PT_blockblend_convert_panel,
+    VIEW3D_PT_blockblend_bake_panel,
+    VIEW3D_PT_blockblend_info_panel,
 ]
 
 
 def register():
-    """注册UI面板"""
     for cls in _classes:
         bpy.utils.register_class(cls)
 
 
 def unregister():
-    """注销UI面板"""
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)

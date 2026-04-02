@@ -15,41 +15,42 @@ class OBJECT_OT_blockblend_bake(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        """需要恰好选中2个网格对象"""
-        selected = [o for o in context.selected_objects if o.type == 'MESH']
+        """需要已指定源和目标网格对象"""
+        props = context.scene.blockblend_props
+        source = props.bake_source_object
+        target = props.bake_target_object
         return (
-            len(selected) == 2
-            and context.active_object
-            and context.active_object.type == 'MESH'
+            source is not None
+            and target is not None
+            and source.type == 'MESH'
+            and target.type == 'MESH'
+            and source != target
         )
 
     def execute(self, context):
         props = context.scene.blockblend_props
 
-        # === 识别源和目标 ===
-        # 用户视角：活动对象 = 源（高模），另一个 = 目标（低模/LOD）
-        source = context.active_object
-        targets = [
-            o for o in context.selected_objects
-            if o != source and o.type == 'MESH'
-        ]
+        # === 从属性获取源和目标 ===
+        source = props.bake_source_object
+        target = props.bake_target_object
 
-        if not targets:
-            self.report({'ERROR'}, "请选择两个网格对象")
+        if source == target:
+            self.report({'ERROR'}, "源对象和目标对象不能相同")
             return {'CANCELLED'}
-
-        target = targets[0]
 
         # === 验证 ===
         if not source.data.materials:
             self.report({'WARNING'},
                         f"源对象 '{source.name}' 没有材质，烘焙结果可能为空")
 
-        if not target.data.uv_layers.active:
-            self.report({'ERROR'},
-                        f"目标 '{target.name}' 没有UV贴图，请先展开UV "
-                        f"（编辑模式下按U → Smart UV Project）")
-            return {'CANCELLED'}
+        # === 自动展开目标UV ===
+        bpy.ops.object.select_all(action='DESELECT')
+        target.select_set(True)
+        context.view_layer.objects.active = target
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.smart_project(angle_limit=1.15192)
+        bpy.ops.object.mode_set(mode='OBJECT')
 
         # === 保存当前渲染引擎 ===
         orig_engine = context.scene.render.engine
@@ -163,6 +164,7 @@ class OBJECT_OT_blockblend_bake(bpy.types.Operator):
         # Image Texture（烘焙目标节点）
         tex_node = nodes.new('ShaderNodeTexImage')
         tex_node.image = img
+        tex_node.interpolation = 'Closest'
         tex_node.location = (-200, 300)
         # 关键：设为 active 节点，烘焙结果会写入此节点
         nodes.active = tex_node
