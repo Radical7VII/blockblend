@@ -8,6 +8,7 @@ from bpy.props import (
     EnumProperty,
     FloatVectorProperty,
     IntProperty,
+    StringProperty,
 )
 
 
@@ -23,7 +24,7 @@ class BlockblendProperties(PropertyGroup):
 
     cube_count: IntProperty(
         name="立方体数量",
-        description="目标立方体数量（近似值），越多越精细",
+        description="目标立方体数量（精确值），指定多少就生成多少",
         min=1,
         max=500,
         default=20,
@@ -51,6 +52,14 @@ class BlockblendProperties(PropertyGroup):
         default=0.05,
         step=0.01,
         precision=2
+    )
+
+    # === 输出设置 ===
+
+    collection_name: StringProperty(
+        name="Collection 名称",
+        description="生成立方体所放入的 Collection 名称，再次生成时会清空该 Collection",
+        default="Blockblend",
     )
 
     # === 材质和颜色 ===

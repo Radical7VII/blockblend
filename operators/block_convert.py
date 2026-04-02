@@ -36,20 +36,24 @@ class OBJECT_OT_blockblend_convert(bpy.types.Operator):
                 cube_count=props.cube_count,
                 min_cube_size=props.min_cube_size,
                 cube_gap=props.cube_gap,
-                color_mode=props.color_mode,
-                uniform_color=props.uniform_color,
-                base_color=props.base_color,
-                color_variation=props.color_variation,
-                smooth_shading=False,
+                collection_name=props.collection_name,
             )
 
             if isinstance(result, list):
                 props.generated_cube_count = len(result)
                 props.last_cube_count_setting = props.cube_count
-                self.report(
-                    {'INFO'},
-                    f"成功创建了 {len(result)} 个立方体"
-                )
+
+                if len(result) < props.cube_count:
+                    self.report(
+                        {'WARNING'},
+                        f"面数不足，仅生成 {len(result)} 个立方体 "
+                        f"(目标 {props.cube_count})"
+                    )
+                else:
+                    self.report(
+                        {'INFO'},
+                        f"成功创建了 {len(result)} 个立方体"
+                    )
             else:
                 self.report({'INFO'}, "转换完成")
 

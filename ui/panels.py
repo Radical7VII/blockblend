@@ -69,6 +69,9 @@ class VIEW3D_PT_blockblend_convert_panel(Panel):
         box.label(text="立方体设置", icon='CUBE')
 
         row = box.row(align=True)
+        row.prop(props, "collection_name")
+
+        row = box.row(align=True)
         row.prop(props, "cube_gap", slider=True)
 
         # --- 材质和颜色 ---

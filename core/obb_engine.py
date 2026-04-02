@@ -1,18 +1,16 @@
 """OBB (Oriented Bounding Box) decomposition engine
 
-Uses face-normal clustering + PCA to approximate a mesh
-with a set of oriented cubes.
+Uses top-down hierarchical binary splitting (BVH-style) to decompose
+a mesh into exactly N oriented cubes, splitting largest volumes first.
 """
 
 import bpy
 import bmesh
-import math
+import heapq
 import numpy as np
-from collections import deque
 from mathutils import Vector, Matrix
-from typing import List, Tuple, Dict, Set, Optional
+from typing import List, Tuple, Dict, Optional
 from .base_engine import ConversionEngine
-from ..utils.helpers import apply_color_to_cube
 
 
 class OBB:
@@ -35,10 +33,10 @@ class OBB:
 
 class OBBEngine(ConversionEngine):
     """
-    OBB 分解引擎
+    OBB 分解引擎（层次化二分拆分）
 
-    通过面法线聚类 + PCA 拟合，用多个可旋转的立方体
-    来概括源模型的体积和形状。不修改源模型。
+    从 1 个覆盖整 mesh 的大 OBB 开始，每次拆分体积最大的 OBB，
+    拆 N-1 次得到恰好 N 个 OBB。天然具有"从大到小"的层次化优先级。
     """
 
     def execute(
@@ -46,23 +44,17 @@ class OBBEngine(ConversionEngine):
         cube_count: int = 20,
         min_cube_size: float = 0.05,
         cube_gap: float = 0.05,
-        color_mode: str = 'ORIGINAL',
-        uniform_color: Tuple[float, float, float] = (0.5, 0.5, 0.5),
-        base_color: Tuple[float, float, float] = (0.8, 0.6, 0.4),
-        color_variation: float = 0.3,
+        collection_name: str = "Blockblend",
         **kwargs,
     ) -> List[bpy.types.Object]:
         """
         执行 OBB 分解
 
         Args:
-            cube_count: 目标立方体数量（近似值）
+            cube_count: 目标立方体数量（精确值）
             min_cube_size: 最小立方体边长约束
             cube_gap: 立方体间隙比例 (0-0.5)
-            color_mode: 颜色模式
-            uniform_color: 统一颜色
-            base_color: 随机颜色基础色
-            color_variation: 随机颜色变化范围
+            collection_name: 输出 Collection 名称
 
         Returns:
             创建的立方体对象列表
@@ -77,70 +69,38 @@ class OBBEngine(ConversionEngine):
         if face_count == 0:
             raise RuntimeError("网格没有面")
 
-        # 2. 构建邻接图
-        adjacency = self._build_adjacency_graph(face_verts)
+        # 2. 预计算所有面的中心点
+        face_centers = vertices[face_verts].mean(axis=1)
 
-        # 3. 面太少时直接用一整个包围盒
-        if face_count <= max(cube_count, 3):
-            all_indices = list(range(face_count))
-            unique_verts = vertices[np.unique(face_verts[all_indices].ravel())]
-            obb = self._pca_obb(unique_verts, all_indices)
-            obbs = [obb] if obb else []
-        else:
-            # 4. 通过二分搜索找到合适的法线阈值
-            threshold = self._find_threshold_for_count(
-                face_normals, adjacency, cube_count, face_count
-            )
+        # 3. 对整个 mesh 拟合初始 OBB
+        all_indices = list(range(face_count))
+        root_obb = self._fit_obb_for_faces(all_indices, vertices, face_verts)
 
-            # 5. 聚类
-            clusters = self._cluster_faces(
-                face_normals, adjacency, threshold, vertices, face_verts
-            )
+        if root_obb is None:
+            raise RuntimeError("无法生成初始包围盒")
 
-            # 6. PCA 拟合每个簇
-            obbs = []
-            for cluster in clusters:
-                unique_vert_indices = np.unique(
-                    face_verts[cluster].ravel()
-                )
-                cluster_verts = vertices[unique_vert_indices]
-                obb = self._pca_obb(cluster_verts, cluster)
-                if obb:
-                    obbs.append(obb)
-
-        # 7. 尺寸约束
-        obbs = self._enforce_size_constraints(obbs, min_cube_size)
+        # 4. 层次化二分拆分
+        obbs = self._hierarchical_split(
+            root_obb, cube_count, vertices, face_verts, face_centers
+        )
 
         if not obbs:
             raise RuntimeError("无法生成任何包围盒")
 
-        # 8. 获取/创建 Collection
-        collection = self._get_or_create_collection()
+        # 5. 膨胀薄轴（不合并，保持数量不变）
+        obbs = self._inflate_thin_axes(obbs, min_cube_size)
 
-        # 9. 获取源模型的边界框（用于颜色计算）
-        obj_bbox = self.obj.bound_box
-        min_z = min(p[2] for p in obj_bbox)
-        max_z = max(p[2] for p in obj_bbox)
-        original_materials = list(self.obj.data.materials)
+        # 6. 获取/创建 Collection
+        collection = self._get_or_create_collection(collection_name)
 
-        # 10. 生成立方体
+        # 7. 生成立方体
         cube_objects = []
         for i, obb in enumerate(obbs):
             cube = self._create_cube_from_obb(
                 obb, cube_gap, collection, i
             )
-            if not cube:
-                continue
-
-            # 应用颜色
-            center_tuple = tuple(obb.center)
-            apply_color_to_cube(
-                cube, center_tuple, i, len(obbs), color_mode,
-                uniform_color, color_variation, base_color,
-                original_materials, min_z, max_z,
-            )
-
-            cube_objects.append(cube)
+            if cube:
+                cube_objects.append(cube)
 
         return cube_objects
 
@@ -183,213 +143,6 @@ class OBBEngine(ConversionEngine):
 
         bm.free()
         return vertices, face_verts, face_normals
-
-    # ─── 邻接图 ──────────────────────────────────────
-
-    def _build_adjacency_graph(
-        self, face_verts: np.ndarray
-    ) -> Dict[int, Set[int]]:
-        """
-        构建面邻接图（共享边 = 相邻）
-
-        Returns:
-            {face_index: {neighbor_indices}}
-        """
-        edge_to_faces: Dict[frozenset, List[int]] = {}
-
-        for fi in range(len(face_verts)):
-            v0, v1, v2 = face_verts[fi]
-            for edge in ((v0, v1), (v1, v2), (v2, v0)):
-                key = frozenset((edge[0], edge[1]))
-                edge_to_faces.setdefault(key, []).append(fi)
-
-        adjacency: Dict[int, Set[int]] = {
-            i: set() for i in range(len(face_verts))
-        }
-        for faces_list in edge_to_faces.values():
-            if len(faces_list) == 2:
-                a, b = faces_list
-                adjacency[a].add(b)
-                adjacency[b].add(a)
-            elif len(faces_list) > 2:
-                # 非流形边：所有共享的面互为邻居
-                for i in range(len(faces_list)):
-                    for j in range(i + 1, len(faces_list)):
-                        adjacency[faces_list[i]].add(faces_list[j])
-                        adjacency[faces_list[j]].add(faces_list[i])
-
-        return adjacency
-
-    # ─── 阈值搜索 ────────────────────────────────────
-
-    def _find_threshold_for_count(
-        self,
-        face_normals: np.ndarray,
-        adjacency: Dict[int, Set[int]],
-        target_count: int,
-        face_count: int,
-    ) -> float:
-        """
-        通过二分搜索找到产生约 target_count 个簇的法线角度阈值
-
-        Returns:
-            法线角度阈值（弧度）
-        """
-        low = 5.0    # 度
-        high = 80.0  # 度
-
-        # 预计算法线点积矩阵的近似（用于加速）
-        for _ in range(8):
-            mid = (low + high) / 2.0
-            clusters = self._cluster_faces(
-                face_normals, adjacency, math.radians(mid),
-                None, None, skip_spatial=True,
-            )
-            if len(clusters) > target_count:
-                low = mid   # 簇太多 → 提高阈值来合并更多面
-            else:
-                high = mid  # 簇太少 → 降低阈值来产生更多簇
-
-        return math.radians((low + high) / 2.0)
-
-    # ─── 聚类 ────────────────────────────────────────
-
-    def _cluster_faces(
-        self,
-        face_normals: np.ndarray,
-        adjacency: Dict[int, Set[int]],
-        threshold: float,
-        vertices: np.ndarray = None,
-        face_verts: np.ndarray = None,
-        skip_spatial: bool = False,
-    ) -> List[List[int]]:
-        """
-        BFS 区域生长聚类
-
-        Args:
-            face_normals: (F, 3) 面法线
-            adjacency: 面邻接图
-            threshold: 法线角度阈值（弧度）
-            vertices: 顶点坐标（用于空间距离检查）
-            face_verts: 面索引（用于空间距离检查）
-            skip_spatial: 跳过空间距离检查（阈值搜索时用）
-
-        Returns:
-            簇列表，每簇为面索引列表
-        """
-        face_count = len(face_normals)
-        assigned = set()
-        clusters = []
-
-        # 预计算模型对角线长度（用于空间距离检查）
-        spatial_limit = float('inf')
-        if vertices is not None and not skip_spatial:
-            bbox_min = vertices.min(axis=0)
-            bbox_max = vertices.max(axis=0)
-            diagonal = np.linalg.norm(bbox_max - bbox_min)
-            spatial_limit = diagonal * 0.5
-
-        for seed in range(face_count):
-            if seed in assigned:
-                continue
-
-            cluster = []
-            queue = deque([seed])
-            seed_normal = face_normals[seed]
-
-            # 簇的质心（用于空间检查）
-            cluster_center = np.zeros(3)
-            cluster_count = 0
-
-            while queue:
-                fi = queue.popleft()
-                if fi in assigned:
-                    continue
-
-                # 法线角度检查
-                dot = np.clip(
-                    np.dot(seed_normal, face_normals[fi]), -1.0, 1.0
-                )
-                angle = math.acos(dot)
-
-                if angle >= threshold:
-                    continue
-
-                # 空间距离检查
-                if not skip_spatial and face_verts is not None:
-                    face_center = vertices[face_verts[fi]].mean(axis=0)
-                    if cluster_count > 0:
-                        mean_center = cluster_center / cluster_count
-                        dist = np.linalg.norm(face_center - mean_center)
-                        if dist > spatial_limit:
-                            continue
-                    cluster_center += face_center
-                    cluster_count += 1
-
-                assigned.add(fi)
-                cluster.append(fi)
-
-                # 将未分配的邻居加入队列
-                for neighbor in adjacency.get(fi, set()):
-                    if neighbor not in assigned:
-                        queue.append(neighbor)
-
-            if cluster:
-                clusters.append(cluster)
-
-        # 合并过小的簇（< 3 面）到最近的空间邻居
-        if not skip_spatial and vertices is not None and face_verts is not None:
-            clusters = self._merge_tiny_clusters(
-                clusters, vertices, face_verts
-            )
-
-        return clusters
-
-    def _merge_tiny_clusters(
-        self,
-        clusters: List[List[int]],
-        vertices: np.ndarray,
-        face_verts: np.ndarray,
-        min_faces: int = 3,
-    ) -> List[List[int]]:
-        """
-        合并面数过少的簇到最近的空间邻居簇
-        """
-        if len(clusters) <= 1:
-            return clusters
-
-        # 计算每个簇的质心
-        def cluster_center(cluster):
-            all_verts = np.unique(face_verts[cluster].ravel())
-            return vertices[all_verts].mean(axis=0)
-
-        centers = [cluster_center(c) for c in clusters]
-
-        # 找到小簇和大簇
-        small_indices = [
-            i for i, c in enumerate(clusters) if len(c) < min_faces
-        ]
-        large_indices = [
-            i for i, c in enumerate(clusters) if len(c) >= min_faces
-        ]
-
-        if not large_indices:
-            return clusters
-
-        # 合并：小簇归入最近的大簇
-        merged = set()
-        for si in small_indices:
-            best_dist = float('inf')
-            best_li = large_indices[0]
-            for li in large_indices:
-                dist = np.linalg.norm(centers[si] - centers[li])
-                if dist < best_dist:
-                    best_dist = dist
-                    best_li = li
-            clusters[best_li].extend(clusters[si])
-            merged.add(si)
-
-        return [c for i, c in enumerate(clusters) if i not in merged]
 
     # ─── PCA 拟合 OBB ────────────────────────────────
 
@@ -441,80 +194,186 @@ class OBBEngine(ConversionEngine):
             face_indices=face_indices,
         )
 
-    # ─── 尺寸约束 ────────────────────────────────────
+    # ─── 层次化二分拆分 ──────────────────────────────
 
-    def _enforce_size_constraints(
+    def _hierarchical_split(
+        self,
+        root_obb: OBB,
+        target_count: int,
+        vertices: np.ndarray,
+        face_verts: np.ndarray,
+        face_centers: np.ndarray,
+    ) -> List[OBB]:
+        """
+        层次化二分拆分
+
+        用最大堆（按 OBB 体积排序）驱动，每次拆分体积最大的 OBB，
+        执行 target_count - 1 次拆分后恰好得到 target_count 个 OBB。
+
+        Args:
+            root_obb: 覆盖整个 mesh 的初始 OBB
+            target_count: 目标 OBB 数量
+            vertices: 全部顶点坐标
+            face_verts: 面顶点索引
+            face_centers: 预计算的面中心点
+
+        Returns:
+            OBB 列表
+        """
+        if target_count <= 1:
+            return [root_obb]
+
+        # 最大堆：存 (-volume, counter, obb)
+        # counter 用于打破体积相同时的比较
+        counter = 0
+        heap = []
+        vol = float(np.prod(root_obb.half_extents))
+        heapq.heappush(heap, (-vol, counter, root_obb))
+        counter += 1
+
+        splits_done = 0
+        max_splits = target_count - 1
+
+        # 保存无法继续拆分的 OBB
+        unsplittable = []
+
+        while splits_done < max_splits and heap:
+            neg_vol, _, obb = heapq.heappop(heap)
+
+            # 面数不足，无法继续拆分
+            if len(obb.face_indices) < 2:
+                unsplittable.append(obb)
+                continue
+
+            # 尝试沿最优轴拆分
+            result = self._split_obb(
+                obb, vertices, face_verts, face_centers
+            )
+
+            if result is None:
+                # 拆分失败（如所有面投影到同一点）
+                unsplittable.append(obb)
+                continue
+
+            obb_a, obb_b = result
+            vol_a = float(np.prod(obb_a.half_extents))
+            vol_b = float(np.prod(obb_b.half_extents))
+            heapq.heappush(heap, (-vol_a, counter, obb_a))
+            counter += 1
+            heapq.heappush(heap, (-vol_b, counter, obb_b))
+            counter += 1
+            splits_done += 1
+
+        # 收集堆中剩余 + 无法拆分的 OBB
+        result = unsplittable + [entry[2] for entry in heap]
+        return result
+
+    def _split_obb(
+        self,
+        obb: OBB,
+        vertices: np.ndarray,
+        face_verts: np.ndarray,
+        face_centers: np.ndarray,
+    ) -> Optional[Tuple[OBB, OBB]]:
+        """
+        将一个 OBB 沿最优 PCA 轴一分为二
+
+        尝试 3 个 PCA 轴，选取拆分后总容量最小的方案
+
+        Returns:
+            (obb_a, obb_b) 成功时，或 None 拆分失败时
+        """
+        face_indices = obb.face_indices
+
+        if len(face_indices) < 2:
+            return None
+
+        # 提取这些面的中心点
+        centers = face_centers[face_indices]
+
+        best_result = None
+        best_total_volume = float('inf')
+
+        for axis_idx in range(3):
+            axis = obb.axes[:, axis_idx]
+
+            # 投影面中心到该轴
+            projections = centers @ axis
+
+            # 按投影值排序，在中位数处切割
+            sorted_order = np.argsort(projections)
+            mid = len(sorted_order) // 2
+
+            if mid == 0:
+                continue  # 所有面投影到同一点
+
+            group_a = [face_indices[i] for i in sorted_order[:mid]]
+            group_b = [face_indices[i] for i in sorted_order[mid:]]
+
+            # PCA 拟合每组
+            obb_a = self._fit_obb_for_faces(group_a, vertices, face_verts)
+            obb_b = self._fit_obb_for_faces(group_b, vertices, face_verts)
+
+            if obb_a is None or obb_b is None:
+                continue
+
+            total_vol = float(
+                np.prod(obb_a.half_extents) + np.prod(obb_b.half_extents)
+            )
+
+            if total_vol < best_total_volume:
+                best_total_volume = total_vol
+                best_result = (obb_a, obb_b)
+
+        return best_result
+
+    def _fit_obb_for_faces(
+        self,
+        face_indices: List[int],
+        vertices: np.ndarray,
+        face_verts: np.ndarray,
+    ) -> Optional[OBB]:
+        """
+        为一组面索引拟合 OBB
+
+        Args:
+            face_indices: 面索引列表
+            vertices: 全部顶点坐标 (V, 3)
+            face_verts: 面顶点索引 (F, 3)
+
+        Returns:
+            OBB 实例或 None
+        """
+        if not face_indices:
+            return None
+
+        unique_vert_indices = np.unique(face_verts[face_indices].ravel())
+        cluster_verts = vertices[unique_vert_indices]
+        return self._pca_obb(cluster_verts, face_indices)
+
+    # ─── 薄轴膨胀 ──────────────────────────────────
+
+    def _inflate_thin_axes(
         self, obbs: List[OBB], min_cube_size: float
     ) -> List[OBB]:
         """
-        强制最小边长约束：
-        1. 膨胀过薄的轴向至 min_cube_size / 2
-        2. 合并三个轴向都过小的 OBB
+        膨胀过薄的轴向至最小尺寸（不合并，保持数量不变）
         """
         min_half = min_cube_size / 2.0
-
-        # 第一步：膨胀薄轴
         for obb in obbs:
             for i in range(3):
                 if obb.half_extents[i] < min_half:
                     obb.half_extents[i] = min_half
-
-        # 第二步：合并所有轴向都过小的 OBB
-        changed = True
-        while changed and len(obbs) > 1:
-            changed = False
-            for i in range(len(obbs)):
-                if obbs[i] is None:
-                    continue
-                # 检查是否所有轴向都过小
-                if all(obb.half_extents[j] <= min_half for j in range(3)):
-                    # 找最近的其他 OBB
-                    best_dist = float('inf')
-                    best_j = -1
-                    for j in range(len(obbs)):
-                        if j == i or obbs[j] is None:
-                            continue
-                        dist = np.linalg.norm(
-                            obbs[i].center - obbs[j].center
-                        )
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_j = j
-
-                    if best_j >= 0:
-                        # 合并：取两个 OBB 的面索引，重新 PCA
-                        merged_faces = (
-                            obbs[i].face_indices + obbs[best_j].face_indices
-                        )
-                        # 用合并后的中心作为近似
-                        new_center = (
-                            obbs[i].center + obbs[best_j].center
-                        ) / 2.0
-                        # 取两个 OBB 中较大的半长
-                        for k in range(3):
-                            obbs[best_j].half_extents[k] = max(
-                                obbs[i].half_extents[k],
-                                obbs[best_j].half_extents[k],
-                            )
-                        obbs[best_j].center = new_center
-                        obbs[best_j].face_indices = merged_faces
-                        obbs[i] = None
-                        changed = True
-
-            obbs = [o for o in obbs if o is not None]
-
         return obbs
 
     # ─── Collection 管理 ─────────────────────────────
 
-    def _get_or_create_collection(self) -> bpy.types.Collection:
+    def _get_or_create_collection(self, coll_name: str) -> bpy.types.Collection:
         """
         获取或创建输出 Collection
 
-        命名规则: Blockblend_{源对象名}
         再次生成时清空重建
         """
-        coll_name = f"Blockblend_{self.obj.name}"
 
         if coll_name in bpy.data.collections:
             coll = bpy.data.collections[coll_name]
