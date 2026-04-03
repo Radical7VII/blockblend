@@ -3,6 +3,7 @@
 import bpy
 from ..core.obb_engine import OBBEngine
 from ..core.heightfield_engine import HeightFieldEngine
+from ..core.bvh_sah_engine import BVHSAHEngine
 
 
 class OBJECT_OT_blockblend_convert(bpy.types.Operator):
@@ -31,10 +32,19 @@ class OBJECT_OT_blockblend_convert(bpy.types.Operator):
         props = context.scene.blockblend_props
 
         try:
-            if props.engine_mode == 'HEIGHTFIELD':
-                result = self._run_heightfield(obj, props)
-            else:
-                result = self._run_obb(obj, props)
+            # 根据引擎模式调度到相应的引擎
+            engine_map = {
+                'OBB': self._run_obb,
+                'HEIGHTFIELD': self._run_heightfield,
+                'BVH_SAH': self._run_bvh_sah,
+            }
+
+            runner = engine_map.get(props.engine_mode)
+            if not runner:
+                self.report({'ERROR'}, f"未知的引擎模式: {props.engine_mode}")
+                return {'CANCELLED'}
+
+            result = runner(obj, props)
 
             if isinstance(result, list):
                 props.generated_cube_count = len(result)
@@ -83,6 +93,17 @@ class OBJECT_OT_blockblend_convert(bpy.types.Operator):
         engine = HeightFieldEngine(obj)
         return engine.execute(
             voxel_size=props.voxel_size,
+            cube_gap=props.cube_gap,
+            collection_name=props.collection_name,
+        )
+
+    def _run_bvh_sah(self, obj, props):
+        """执行 BVH + SAH 分解"""
+        engine = BVHSAHEngine(obj)
+        return engine.execute(
+            max_leaf_size=props.bvh_max_leaf_size,
+            max_depth=props.bvh_max_depth,
+            sah_alpha=props.bvh_sah_alpha,
             cube_gap=props.cube_gap,
             collection_name=props.collection_name,
         )

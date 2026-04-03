@@ -107,7 +107,18 @@ class OBJECT_OT_blockblend_bake(bpy.types.Operator):
             bpy.ops.object.bake(type=bake_type)
 
             # === 保存图片到磁盘 ===
-            img.filepath_raw = f"//baked_{img_name}.png"
+            # 使用绝对路径，避免 blend 文件未保存时的问题
+            import os
+            import tempfile
+
+            # 优先使用 blend 文件所在目录，否则使用临时目录
+            if bpy.data.is_saved:
+                bake_dir = os.path.dirname(bpy.data.filepath)
+            else:
+                bake_dir = tempfile.gettempdir()
+
+            filepath = os.path.join(bake_dir, f"baked_{img_name}.png")
+            img.filepath_raw = filepath
             img.file_format = 'PNG'
             if is_normal:
                 img.file_format = 'PNG'
@@ -122,7 +133,8 @@ class OBJECT_OT_blockblend_bake(bpy.types.Operator):
             self.report({'INFO'},
                         f"已将 '{source.name}' 的"
                         f"{self._bake_type_label(bake_type)}"
-                        f"烘焙到 '{target.name}'")
+                        f"烘焙到 '{target.name}'\n"
+                        f"贴图已保存至: {filepath}")
             return {'FINISHED'}
 
         except RuntimeError as e:

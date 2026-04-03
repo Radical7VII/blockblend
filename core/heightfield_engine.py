@@ -138,23 +138,24 @@ class HeightFieldEngine(ConversionEngine):
                 ray_origin = Vector((cx, cy, bb_min[2] - dims[2]))
                 ray_dir = Vector((0.0, 0.0, 1.0))
 
-                # 收集所有交点的 t 值
-                t_values = []
+                # 收集所有交点的 z 坐标（使用累积距离）
+                z_hits = []
                 loc, normal, idx, t = tree.ray_cast(ray_origin, ray_dir)
+                accumulated_distance = 0.0
                 max_t = dims[2] * 3  # 最大搜索距离
+                start_z = ray_origin[2]  # 射线起始 z
 
-                while loc is not None and t < max_t:
-                    t_values.append(t)
+                while loc is not None and accumulated_distance + t < max_t:
+                    accumulated_distance += t
+                    z_hits.append(start_z + accumulated_distance)
                     # 从交点处微偏移继续搜索下一个交点
                     ray_origin = loc + ray_dir * 0.0001
                     loc, normal, idx, t = tree.ray_cast(ray_origin, ray_dir)
 
                 # 交点成对标记：第 1-2 个之间在内部，第 3-4 个之间在内部，...
-                # 转换 t 值为 z 坐标，再转换为体素索引
-                z_base = bb_min[2] - dims[2]  # 射线起始 z
-                for pair_idx in range(0, len(t_values) - 1, 2):
-                    z_enter = z_base + t_values[pair_idx]
-                    z_exit = z_base + t_values[pair_idx + 1]
+                for pair_idx in range(0, len(z_hits) - 1, 2):
+                    z_enter = z_hits[pair_idx]
+                    z_exit = z_hits[pair_idx + 1]
 
                     # 转换为体素索引范围
                     iz_min = max(0, int(np.floor((z_enter - origin[2]) / actual[2])))

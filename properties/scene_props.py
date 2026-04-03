@@ -28,8 +28,9 @@ class BlockblendProperties(PropertyGroup):
         items=[
             ('OBB', 'OBB 分解', '有向包围盒层次化拆分，方块可旋转'),
             ('HEIGHTFIELD', '高度场方块', '轴对齐方块组合，Minecraft 风格'),
+            ('BVH_SAH', 'BVH 简化版', '快速二分包围盒，基于最大跨度轴分割（推荐）'),
         ],
-        default='HEIGHTFIELD'
+        default='BVH_SAH'
     )
 
     voxel_size: FloatProperty(
@@ -63,6 +64,38 @@ class BlockblendProperties(PropertyGroup):
         step=0.01,
         precision=3,
         unit='LENGTH'
+    )
+
+    # === K-Means + PCA 参数 ===
+
+    # === BVH + SAH 参数 ===
+
+    bvh_max_leaf_size: IntProperty(
+        name="最大叶子大小",
+        description="叶子节点的最大三角形数（增大此值可提高性能）",
+        min=1,
+        max=200,
+        default=50,
+        step=5
+    )
+
+    bvh_max_depth: IntProperty(
+        name="最大深度",
+        description="BVH树的最大递归深度（减小此值可提高性能）",
+        min=1,
+        max=20,
+        default=12,
+        step=1
+    )
+
+    bvh_sah_alpha: FloatProperty(
+        name="SAH系数",
+        description="SAH成本系数（控制分割激进程度）",
+        min=0.1,
+        max=10.0,
+        default=1.0,
+        step=0.1,
+        precision=1
     )
 
     # === 立方体设置 ===
